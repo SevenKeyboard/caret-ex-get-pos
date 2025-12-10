@@ -15,7 +15,7 @@
 ;   CaretGetPos not working in Chrome?
 ;     https://www.autohotkey.com/boards/viewtopic.php?p=568784
 ;   Get cursor position in JetBrains IDE (Solved)
-;     https://www.autohotkey.com/boards/viewtopic.php?f=82&t=130941&p=576467
+;     https://www.autohotkey.com/boards/viewtopic.php?p=576467
 ;
 ;   ACC / MSAA reference implementations:
 ;     https://github.com/Drugoy/Autohotkey-scripts-.ahk/blob/master/Libraries/Acc.ahk
