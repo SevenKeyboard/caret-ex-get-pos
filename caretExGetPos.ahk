@@ -75,7 +75,7 @@ caretExGetPos(byRef outX := "", byRef outY := "", byRef outWidth := "", byRef ou
                 oAcc.accLocation(comObject(0x4003, &bufX), comObject(0x4003, &bufY), comObject(0x4003, &bufW), comObject(0x4003, &bufH), 0)
                 x := numGet(bufX,0,"int"), y := numGet(bufY,0,"int"), w := numGet(bufW,0,"int"), h := numGet(bufH,0,"int")
                 if ((x | y) !== 0)    {
-                    DpiAwareCoord.convertMonToSys(outX := x, outY := y, WinGetWhichMonitor(hWnd,, MONITOR_DEFAULTTONEAREST))
+                    DpiAwareCoord.convertMonToSys(outX := x, outY := y, winGetWhichMonitor(hWnd,, MONITOR_DEFAULTTONEAREST))
                     outWidth := w, outHeight := h, outCaretType := "ACC"                    
                     return true
                 }
