@@ -39,6 +39,16 @@ Example Usage:
     toolTip % "Caret X: " x "`nCaret Y: " y "`nCaret W: " w "`nCaret H: " h "`nType: " caretType, x, y
 */
 
+/*
+my-app\
+├─ MyApp.ahk
+├─ lib\
+│  └─ caretExGetPos.ahk
+└─ dll\
+   └─ x64\
+      └─ windowsaccessbridge-64.dll
+*/
+
 class VersionManager_caretExGetPos
 {
     static _ := VersionManager_caretExGetPos._init()
