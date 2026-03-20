@@ -54,13 +54,13 @@ class VersionManager_caretExGetPos
     static _ := VersionManager_caretExGetPos._init()
     _init() {
         global
-        CARETEXGETPOS_VERSION := "2.0.0"
+        CARETEXGETPOS_VERSION := "2.1.0"
         if (!this._verCheck(DPIAWARECOORD_VERSION, "1.1.0"))
             throw exception("DpiAwareCoord version 1.x is required (minimum 1.1.0).")
         if (!this._verCheck(DPIAWARENESSCONTEXTUTILS_VERSION, "1.0.0"))
             throw exception("DpiAwarenessContextUtils version 1.x is required (minimum 1.0.0).")
-        if (!this._verCheck(SHELLHOOKWINDOW_VERSION, "1.0.0"))
-            throw exception("ShellHookWindow version 1.x is required (minimum 1.0.0).")
+        if (!this._verCheck(SHELLHOOKWINDOW_VERSION, "2.0.0"))
+            throw exception("ShellHookWindow version 2.x is required (minimum 2.0.0).")
         if (!this._verCheck(WINGETWHICHMONITOR_VERSION, "1.0.1"))
             throw exception("WinGetWhichMonitor version 1.x is required (minimum 1.0.1).")
         return true
@@ -172,14 +172,13 @@ class _CaretExGetPosProvider
     ;------------------------------------------------
     static _ := _CaretExGetPosProvider._init()
     _init()    {
-        ShellHookWindow.register(objBindMethod(this, "_shellMessage"))
-        ShellHookWindow.unregisterOnExit()
+        ShellHookWindow.ensureOnMessage(objBindMethod(this, "_onShellHookMessage"))
         this._initWab()
         objbmOnExiting := objBindMethod(this, "_onExiting")
         onExit(objbmOnExiting)
         return true
     }
-    _shellMessage(wParam, lParam, _*)    {
+    _onShellHookMessage(wParam, lParam, _*)    {
         static HSHELL_WINDOWDESTROYED := 2
         if (wParam == HSHELL_WINDOWDESTROYED)    {
             hWnd := lParam & 0xFFFFFFFF
