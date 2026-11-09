@@ -6,6 +6,7 @@ namespace SevenKeyboard;
 internal static class CaretDpi
 {
     internal const nint SystemAware = -2;
+    internal const nint PerMonitorAware = -3; // Windowless query: PMv1 also supports Windows 10 1607.
     internal delegate bool PointTransform(ref CaretNative.Point point);
 
     internal readonly struct Scope : IDisposable

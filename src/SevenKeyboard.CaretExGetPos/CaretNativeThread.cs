@@ -90,6 +90,7 @@ internal sealed class CaretNativeThread : IAsyncDisposable
 
     // Narrow lifecycle diagnostics for the input-free native smoke test.
     internal long RuntimeId => _backend.RuntimeId;
+    internal nint Desktop => _backend.Desktop;
     internal Task WaitForExitAsync() => _backend.WaitForExitAsync();
     internal nint NotificationWindow { get { _backend.RequireCurrent(); return _backend.Window; } }
     internal bool JavaAvailable { get { _backend.RequireCurrent(); return _javaAvailable; } }
@@ -164,6 +165,7 @@ internal sealed class CaretNativeThread : IAsyncDisposable
         internal int LeaseCount; // guarded by SharedGate
         internal bool Closing; // guarded by SharedGate
         internal nint Window => _window;
+        internal nint Desktop => _desktop;
         internal bool IsStoppingOrStopped { get { lock (_queueGate) return _stopping || _stopped; } }
         private readonly object _queueGate = new();
         private readonly Queue<Command> _commands = new();

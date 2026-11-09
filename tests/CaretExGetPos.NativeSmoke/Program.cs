@@ -18,7 +18,8 @@ internal static class Program
             RunPure();
             if (args.SequenceEqual(["--pump"])) await RunLifetimeAsync(loadJava: false);
             else if (args.SequenceEqual(["--jab-lifetime"])) await RunLifetimeAsync(loadJava: true);
-            else if (args.Length != 0) throw new ArgumentException("Usage: CaretExGetPos.NativeSmoke [--pump|--jab-lifetime]");
+            else if (args.SequenceEqual(["--workers"])) await ProviderThreadTests.RunAsync();
+            else if (args.Length != 0) throw new ArgumentException("Usage: CaretExGetPos.NativeSmoke [--pump|--jab-lifetime|--workers]");
             Console.WriteLine($"PASS: {_checks} native/DPI checks ({RuntimeInformation.ProcessArchitecture}).");
             return 0;
         }
@@ -126,6 +127,19 @@ internal static class Program
                 return CaretNative.GetThreadDpiAwarenessContext() == before;
             });
             Check(restored, "Worker DPI scope restores its previous thread context.");
+            foreach (nint context in new nint[] { -1, -2, -3, -4 })
+            {
+                bool msaaRestored = await first.RunAsync(() =>
+                {
+                    using var outer = new CaretDpi.Scope(context);
+                    nint before = CaretNative.GetThreadDpiAwarenessContext();
+                    // Our invisible notification HWND owns no caret. Exercise the
+                    // real MSAA no-result path without querying the user's foreground.
+                    CaretPosition? result = CaretNative.TryGetMsaa(window);
+                    return result is null && CaretNative.GetThreadDpiAwarenessContext() == before;
+                });
+                Check(msaaRestored, $"MSAA no-result lookup restores caller DPI context {context}.");
+            }
             await first.DisposeAsync();
             Check(await second.RunAsync(() => 42) == 42, "Disposing one lease leaves another usable.");
             Check(CaretNative.IsWindow(window) != 0, "Nonfinal disposal retains the shared HWND.");

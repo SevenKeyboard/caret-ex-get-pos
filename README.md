@@ -1,6 +1,6 @@
 # caret-ex-get-pos
 
-Asynchronous caret lookup in physical desktop pixels. Version 3.0.0; .NET 10,
+Asynchronous caret lookup in physical desktop pixels. Version 3.1.0; .NET 10,
 Windows 10 1607+, x64/x86, NativeAOT. Java Access Bridge is x64 only.
 
 ```csharp
@@ -14,6 +14,29 @@ if (await caret.GetPositionAsync() is { } position)
     Console.WriteLine($"{position.X}, {position.Y}, {position.Width}, {position.Height}: {position.CaretType}");
 ```
 
+To compare the experimental scheduler, use the same instance:
+
+```csharp
+var sequential = await caret.GetPositionAsync(); // Original learned preference.
+var parallel = await caret.GetPositionAsync(CaretQueryMode.ParallelPriority);
+```
+
+`ParallelPriority` runs four groups: Java, MSAA, Win32, and UIA. UIA TextPattern2
+then TextPattern share one focused element on the borrowed UIA owner. Two reusable
+workers for MSAA and Win32 are created on the first parallel query and released
+with the caret instance; Java keeps its existing message thread. This mode does not
+read or train the preference cache. Selection always prefers Java, UIA TextPattern2,
+MSAA, GUIThreadInfo, then UIA TextPattern, regardless of completion order.
+These two example calls observe different moments, not an atomic comparison.
+The first parallel call also includes worker startup; compare warmed-up samples.
+
+A parallel winner may return before lower-priority work finishes. The next request
+and disposal wait for that work and its cleanup, preventing overlapping batches.
+No thread or native call is forcibly stopped. A slow higher-priority provider can
+delay the result; leftover work can delay the next request. Unused query failures
+are observed without replacing the winner; deferred cleanup failures reach
+`DisposeAsync`. The default sequential behavior is unchanged.
+
 Create one caret instance and share it. UIA is optional: `CaretExGetPos.CreateAsync()`
 uses the other providers. The caller owns UIA and disposes the caret first.
 If UIA creation fails, the caller may catch the exception and create the caret
@@ -25,6 +48,8 @@ cache. Unavailable providers and native lookup failures fall through; no result
 returns null. Caller misuse and disposed-object errors remain exceptions.
 Coordinates and dimensions use physical screen pixels, including negative desktop
 coordinates. Results contain values only and need no disposal.
+MSAA temporarily uses per-monitor thread DPI for its query and restores the
+previous context afterward; the application's process DPI is unchanged.
 
 Queries run in acceptance order. Foreground lookup begins when a request actually
 starts, rather than when it is queued. Focus may still change while Windows is

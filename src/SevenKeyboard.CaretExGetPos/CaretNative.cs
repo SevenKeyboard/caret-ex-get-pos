@@ -65,16 +65,22 @@ internal static unsafe partial class CaretNative
     internal static CaretPosition? TryGetMsaa(nint window)
     {
         if (window == 0) return null;
-        nint accessible = 0;
         try
         {
-            Guid id = AccessibleId;
-            int hr = AccessibleObjectFromWindow(window, ObjidCaret, &id, &accessible);
-            if (hr != 0 || accessible == 0) return null;
-            return ReadAccessibleLocation(accessible);
+            // Keep object acquisition, accLocation and release in one physical
+            // coordinate context; restore this worker's previous context afterward.
+            using var dpi = new CaretDpi.Scope(CaretDpi.PerMonitorAware);
+            nint accessible = 0;
+            try
+            {
+                Guid id = AccessibleId;
+                int hr = AccessibleObjectFromWindow(window, ObjidCaret, &id, &accessible);
+                if (hr != 0 || accessible == 0) return null;
+                return ReadAccessibleLocation(accessible);
+            }
+            finally { if (accessible != 0) Release(accessible); }
         }
         catch (Exception) { return null; }
-        finally { if (accessible != 0) Release(accessible); }
     }
 
     internal static CaretPosition? ReadAccessibleLocation(nint accessible)
