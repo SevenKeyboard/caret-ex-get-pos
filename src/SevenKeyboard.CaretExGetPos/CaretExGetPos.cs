@@ -4,9 +4,9 @@ using SevenKeyboard.UiAutomation;
 
 namespace SevenKeyboard;
 
-/// <summary>Queries the current caret with original sequential lookup or experimental fixed-priority parallel lookup.</summary>
+/// <summary>Queries the current caret with bounded parallel lookup or explicit sequential lookup.</summary>
 /// <remarks>
-/// Queries are accepted synchronously and executed in FIFO order. A supplied UIA client
+/// Results are selected in acceptance order; busy speculative providers are skipped. A supplied UIA client
 /// is borrowed and must remain usable until this instance finishes disposing.
 /// </remarks>
 public sealed partial class CaretExGetPos : IAsyncDisposable
@@ -16,8 +16,9 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
     private sealed record QueryRequest(CaretQueryMode Mode, TaskCompletionSource<CaretPosition?> Completion);
     private readonly CaretQueryState _state = new();
     private readonly Func<Task<CaretPosition?>> _query;
-    private readonly Func<Task<CaretQueryOperation>>? _parallelQuery;
+    private readonly Func<TimeSpan, Task<CaretQueryOperation>>? _parallelQuery;
     private Exception? _drainFailure;
+    private readonly HashSet<Task> _drains = [];
     private readonly Func<ValueTask> _release;
     private bool _processing;
     private TaskCompletionSource? _disposal;
@@ -25,18 +26,18 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
     private CaretExGetPos(CaretNativeThread native, UiAutomationClient? uia)
     {
         _query = () => QueryAsync(native, uia);
-        _parallelQuery = () => StartParallelAsync(native, uia);
+        _parallelQuery = budget => StartParallelAsync(native, uia, budget);
         _release = () => ReleaseAsync(native);
         native.WindowDestroyed += _state.Forget;
     }
 
     // A desktop-free seam for checking the real admission/drain lifecycle.
-    internal CaretExGetPos(Func<Task<CaretPosition?>> query, Func<ValueTask> release, Func<Task<CaretQueryOperation>>? parallelQuery = null)
+    internal CaretExGetPos(Func<Task<CaretPosition?>> query, Func<ValueTask> release, Func<TimeSpan, Task<CaretQueryOperation>>? parallelQuery = null)
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(release);
         _query = query;
-        _parallelQuery = parallelQuery;
+        _parallelQuery = parallelQuery ?? (_ => Task.FromResult(new CaretQueryOperation(_query(), Task.CompletedTask)));
         _release = release;
     }
 
@@ -49,7 +50,9 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
         CaretNativeThread native = await CaretNativeThread.CreateAsync(javaAccessBridgePath).ConfigureAwait(false);
         try
         {
-            return new CaretExGetPos(native, uia);
+            var workers = await CaretParallelNativeThreads.CreateAsync(native.Desktop).ConfigureAwait(false);
+            try { return new CaretExGetPos(native, uia) { _parallelNative = workers }; }
+            catch { await workers.DisposeAsync().ConfigureAwait(false); throw; }
         }
         catch
         {
@@ -58,9 +61,9 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
         }
     }
 
-    /// <summary>Queues a query. The foreground window is sampled when that query starts.</summary>
+    /// <summary>Queries in parallel: the first query per instance has a 200 ms preference budget, later queries 100 ms. Returns null when no usable result is available.</summary>
     /// <exception cref="ObjectDisposedException">Disposal has begun.</exception>
-    public Task<CaretPosition?> GetPositionAsync() => GetPositionAsync(CaretQueryMode.Sequential);
+    public Task<CaretPosition?> GetPositionAsync() => GetPositionAsync(CaretQueryMode.ParallelPriority);
 
     /// <summary>Queues the selected mode. Mode is captured at admission; foreground at execution.</summary>
     public Task<CaretPosition?> GetPositionAsync(CaretQueryMode mode)
@@ -120,9 +123,10 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
             CaretQueryOperation? operation = null;
             try
             {
+                if (request.Mode == CaretQueryMode.Sequential) await DrainPendingAsync().ConfigureAwait(false);
                 operation = request.Mode == CaretQueryMode.Sequential
                     ? new CaretQueryOperation(_query(), Task.CompletedTask)
-                    : await (_parallelQuery ?? throw new InvalidOperationException("Parallel query backend is unavailable."))().ConfigureAwait(false);
+                    : await (_parallelQuery ?? throw new InvalidOperationException("Parallel query backend is unavailable."))(TakeParallelPreferenceBudget()).ConfigureAwait(false);
                 request.Completion.SetResult(await operation.Result.ConfigureAwait(false));
             }
             catch (Exception error)
@@ -134,10 +138,9 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
             {
                 if (operation is not null)
                 {
-                    // Deliver the winner promptly, but never start another batch
-                    // or release native/UIA resources over unfinished speculative work.
-                    try { await operation.Drain.ConfigureAwait(false); }
-                    catch (Exception error) { _drainFailure ??= error; }
+                    // A completed result frees the coordinator, not the native owner.
+                    // Per-provider slots prevent overlap; disposal still drains ownership.
+                    TrackDrain(operation.Drain);
                 }
             }
         }
@@ -146,6 +149,7 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
             return;
         try
         {
+            await DrainPendingAsync().ConfigureAwait(false);
             await _release().ConfigureAwait(false);
             if (_drainFailure is { } drainFailure) disposal.SetException(drainFailure);
             else disposal.SetResult();
@@ -155,6 +159,30 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
             disposal.SetException(_drainFailure is { } drainFailure
                 ? new AggregateException(drainFailure, error) : error);
         }
+    }
+
+    private void TrackDrain(Task drain)
+    {
+        Task observed = ObserveDrainAsync(drain);
+        lock (_gate) if (!observed.IsCompleted) _drains.Add(observed);
+        _ = RemoveDrainAsync(observed);
+    }
+
+    private async Task ObserveDrainAsync(Task drain)
+    {
+        try { await drain.ConfigureAwait(false); }
+        catch (Exception error) { lock (_gate) _drainFailure ??= error; }
+    }
+
+    private async Task RemoveDrainAsync(Task observed)
+    {
+        await observed.ConfigureAwait(false);
+        lock (_gate) _drains.Remove(observed);
+    }
+
+    private Task DrainPendingAsync()
+    {
+        lock (_gate) return Task.WhenAll(_drains);
     }
 
     private async Task<CaretPosition?> QueryAsync(CaretNativeThread native, UiAutomationClient? uia)
@@ -199,8 +227,8 @@ public sealed partial class CaretExGetPos : IAsyncDisposable
                             if (focusedElement is null)
                                 continue;
                             position = provider == CaretProvider.UIATextPattern2
-                                ? CaretQueryState.FromCaretRange(await focusedElement.GetCaretRangeAsync().ConfigureAwait(false))
-                                : CaretQueryState.FromFirstTextSelection(await focusedElement.GetFirstTextSelectionAsync().ConfigureAwait(false));
+                                ? CaretQueryState.FromResolvedRectangle(await focusedElement.GetCaretRectangleAsync().ConfigureAwait(false), true)
+                                : CaretQueryState.FromResolvedRectangle(await focusedElement.GetSelectionCaretRectangleAsync().ConfigureAwait(false), false);
                         }
                         catch (Exception error) when (error is COMException or Win32Exception)
                         {

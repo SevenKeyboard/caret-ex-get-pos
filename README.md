@@ -1,79 +1,74 @@
 # caret-ex-get-pos
 
-Asynchronous caret lookup in physical desktop pixels. Version 3.1.0; .NET 10,
+Asynchronous caret lookup in physical desktop pixels. Version 4.0.0; .NET 10,
 Windows 10 1607+, x64/x86, NativeAOT. Java Access Bridge is x64 only.
 
-```csharp
-using SevenKeyboard;
-using SevenKeyboard.UiAutomation;
+    using SevenKeyboard;
+    using SevenKeyboard.UiAutomation;
 
-await using var uia = await UiAutomationClient.CreateAsync();
-await using var caret = await CaretExGetPos.CreateAsync(uia);
+    // Keep a dedicated client when IMC or other consumers need a separate queue.
+    await using var caretUia = await UiAutomationClient.CreateAsync();
+    await using var caret = await CaretExGetPos.CreateAsync(caretUia);
 
-if (await caret.GetPositionAsync() is { } position)
-    Console.WriteLine($"{position.X}, {position.Y}, {position.Width}, {position.Height}: {position.CaretType}");
-```
+    if (await caret.GetPositionAsync() is { } position)
+        Console.WriteLine($"{position.X}, {position.Y}, {position.Width}, {position.Height}: {position.CaretType}");
 
-To compare the experimental scheduler, use the same instance:
+Create one caret instance and share it. UIA is optional: CreateAsync() uses the
+other providers. Dispose the caret before its borrowed UIA client.
 
-```csharp
-var sequential = await caret.GetPositionAsync(); // Original learned preference.
-var parallel = await caret.GetPositionAsync(CaretQueryMode.ParallelPriority);
-```
+The default runs four groups in parallel: Java, MSAA, Win32, and UIA. UIA
+TextPattern2 and TextPattern share one owner. Preference is Java, UIA TextPattern2,
+MSAA, GUIThreadInfo, then UIA TextPattern. It does not use the learned cache.
+The first parallel query per instance has a 200 ms preference budget; later
+queries have 100 ms. These are not hard real-time deadlines. The first allowance
+is consumed when that query starts, even if it returns null or fails; changing
+windows does not reset it. Explicit sequential queries do not consume it.
+An available winner returns sooner when no higher pending path can win.
+At the budget, the best completed result is returned once; no usable result gives
+null. Late results never replace it or become a later query's answer.
 
-`ParallelPriority` runs four groups: Java, MSAA, Win32, and UIA. UIA TextPattern2
-then TextPattern share one focused element on the borrowed UIA owner. Two reusable
-workers for MSAA and Win32 are created on the first parallel query and released
-with the caret instance; Java keeps its existing message thread. This mode does not
-read or train the preference cache. Selection always prefers Java, UIA TextPattern2,
-MSAA, GUIThreadInfo, then UIA TextPattern, regardless of completion order.
-These two example calls observe different moments, not an atomic comparison.
-The first parallel call also includes worker startup; compare warmed-up samples.
+Each provider group accepts only one outstanding query. A busy group is skipped
+by later requests while the other groups can sample again. Slow native calls are
+not forcibly cancelled. Dedicated UIA clients separate client queues, but cannot
+make an unresponsive target application respond.
 
-A parallel winner may return before lower-priority work finishes. The next request
-and disposal wait for that work and its cleanup, preventing overlapping batches.
-No thread or native call is forcibly stopped. A slow higher-priority provider can
-delay the result; leftover work can delay the next request. Unused query failures
-are observed without replacing the winner; deferred cleanup failures reach
-`DisposeAsync`. The default sequential behavior is unchanged.
+Coordinates and dimensions are physical screen pixels, including negative desktop
+coordinates. UIA caret geometry uses a direct rectangle or supported text-range
+evidence. Ambiguous selection endpoints or character edges return no result.
+IsActive is not used to reject a caret. No input-field-edge guesses are made.
+UIA TextPattern remains the last fallback. A provider can return a plausible but
+incorrect rectangle; no app-specific blocking or confidence heuristic is applied.
+Callers can inspect CaretType when deciding whether to use this fallback.
+Returned values own no resources. Missing data and native lookup failures fall
+through; caller misuse and disposed-object errors remain exceptions.
 
-Create one caret instance and share it. UIA is optional: `CaretExGetPos.CreateAsync()`
-uses the other providers. The caller owns UIA and disposes the caret first.
-If UIA creation fails, the caller may catch the exception and create the caret
-without it; retrying UIA creation is also the caller's responsibility.
+Results are selected in acceptance order. Obvious foreground/focus HWND changes
+discard the parallel result. This is not an atomic snapshot: movement inside one
+field may still race the query. Do not enqueue an unbounded stream of requests.
 
-The original provider order is Java Access Bridge, UIA TextPattern2, MSAA,
-GUIThreadInfo, UIA TextPattern, with the original per-window preferred-provider
-cache. Unavailable providers and native lookup failures fall through; no result
-returns null. Caller misuse and disposed-object errors remain exceptions.
-Coordinates and dimensions use physical screen pixels, including negative desktop
-coordinates. Results contain values only and need no disposal.
-MSAA temporarily uses per-monitor thread DPI for its query and restores the
-previous context afterward; the application's process DPI is unchanged.
+Explicit sequential lookup remains available:
 
-Queries run in acceptance order. Foreground lookup begins when a request actually
-starts, rather than when it is queued. Focus may still change while Windows is
-being queried. Window destruction clears its cache without repopulating it from
-an older query. `DisposeAsync()` rejects new requests and drains accepted requests
-before releasing internal resources. A stalled native provider can delay shutdown.
+    var position = await caret.GetPositionAsync(CaretQueryMode.Sequential);
 
-Java uses `dll/x64/windowsaccessbridge-64.dll` below `AppContext.BaseDirectory`.
-An optional absolute `javaAccessBridgePath` overrides it. Missing/unloadable Java
-support disables only that provider; no other installation is searched. The DLL
-and its notices are included automatically in build and publish output. The Java
-application must have Access Bridge enabled; this library does not change its
-settings. The bundled binary and original Java DPI corrections are retained.
-Overlapping instances share one native runtime. If another instance already loaded
-a different DLL path, the new instance skips Java rather than substituting that
-DLL. The last instance releases the runtime; a later instance may select a new path.
+It retains the original per-window learned preference and waits for preceding
+speculative work. Both modes use the conservative UIA geometry improvements.
+DisposeAsync() rejects new requests, finishes accepted requests, waits for all
+native work and cleanup, then releases the workers. A stalled provider may delay
+shutdown. Cleanup errors are reported by disposal.
 
-Dependencies are separate source projects. Override `UiAutomationClientProjectPath`,
-`ShellHookWindowProjectPath`, and `LibraryBuildTargetsPath` for another layout.
-The build checks minimum versions and matching majors. Product snapshots should
-include these sources, the Java DLL, and its notices; original repositories do
-not copy dependency sources into themselves.
+MSAA temporarily uses per-monitor thread DPI and restores it. Java retains its
+original conversion formulas. The application's process DPI is unchanged.
+Java uses dll/x64/windowsaccessbridge-64.dll below AppContext.BaseDirectory;
+an optional absolute javaAccessBridgePath overrides it. Missing/unloadable Java
+support disables that path. The DLL and notices are copied to build/publish output.
+The target Java application must already have Access Bridge enabled.
 
-Compared with AHK 2.1.0, C# 3.0.0 uses an owned instance and asynchronous value
-results, borrows optional UIA, and always returns physical pixels. Provider order,
-cache learning, first-selection rules, and provider labels retain original behavior.
-See [tests](tests/README.md) for validation and remaining live-DPI coverage.
+Dependencies are separate source projects. Override UiAutomationClientProjectPath,
+ShellHookWindowProjectPath, and LibraryBuildTargetsPath for another layout.
+The build checks minimum versions and matching majors. Product snapshots include
+dependency sources, the Java DLL, and notices; source repositories do not vendor
+each other.
+
+Version 4 changes the default scheduling and may return null where older versions
+waited longer or used an ambiguous selection rectangle. AHK remains unchanged.
+See [tests](tests/README.md) for completed validation and live-test limits.

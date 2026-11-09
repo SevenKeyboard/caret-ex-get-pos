@@ -117,3 +117,107 @@ Final MSAA-scope regression checks (2026-11-10):
 - The comparison app verified all three host DPI modes, UIA/JAB readiness, and
   clean shutdown. The displayed overlay and comparison helpers were rebuilt
   from the revised source and signed before the final WPF trial.
+
+
+Conservative geometry and bounded parallel lookup (4.0.0, 2026-11-10):
+
+- Signed managed x64, managed x86, and NativeAOT x64 passed core policy/lifecycle,
+  fixed-priority selection, and new bounded-selection/slot/drain tests.
+- Tests explicitly cover expiry with no result, choosing the best completed result,
+  no late replacement or reuse, skipping busy paths, resuming available paths,
+  parallel progress despite unfinished work, sequential barriers, disposal draining,
+  and cleanup errors surviving later successful queries. A synchronous provider
+  result is rejected if its budget/context expires during the call.
+- Signed NativeSmoke --workers passed on x64, x86, and NativeAOT x64 (25 base
+  native/DPI checks plus worker and shared-Java admission suites). Shared Java tests
+  race 16 admissions across two leases, verify only one queued/active query,
+  expired queued work, sequential-call exclusion, failure recovery and disposal.
+  They substitute the Java query body; they do not establish real JAB accuracy.
+- UiAutomationClient 1.1.0 passed 266 assertions on each of the same three targets.
+  Native COM stubs exercise direct inactive TP2 geometry, real selection endpoints,
+  LTR/RTL neighbors, unsupported/mixed direction, wrap/bidi ambiguity, larger
+  fallback text units, verified document boundaries, and failure-path ownership.
+  Raw UIA APIs retain their previous contracts.
+- Temporary enhanced verifier startup passed: F1-F4, passive overlays, initialization
+  and cleanup without injected input. Separate unaware/system/PMv2 matrix hosts
+  verified their DPI settings, UIA/JAB readiness and clean exit.
+- Initial checks did not cover real-application alignment or live IsActive
+  comparison. Later VS Code timing and geometry observations are recorded below.
+  WPF/browser LTR, RTL, mixed text, selection and wrap fixtures are ready for
+  manual trials. Ambiguous/missing results are not passes.
+- Initial timing used a uniform 50 ms budget. Historical 3.1.0 matrix reports
+  had 30 first Auto samples (median 78.28 ms, max 164.88 ms) and 30 repeated samples
+  (median 4.85 ms, max 14.78 ms). They do not record each parallel completion time
+  and cannot establish this revision's deadline miss rate or an optimal budget.
+- Current foreground/focus HWND checks reject obvious target changes, not all
+  movement within one field. Provider queries are not an atomic desktop snapshot.
+  IsActive is deliberately still not filtered. Live RTL/wrap accuracy and
+  broader cold/warm timing remain unverified. Windows 10 and live x86/AOT
+  mixed-DPI coverage remain unverified.
+- Local evidence: D:/Dev/_scratch/caret-enhancement-20261110/{caret,uia,native}-*
+  logs; enhanced startup logs beside the temporary verifier projects.
+
+
+First-query allowance and fallback review (2026-11-10):
+
+- The first executed parallel query per CaretExGetPos instance now gets 200 ms;
+  subsequent parallel queries get 100 ms, including after null or failure.
+  Sequential queries stay unbounded and neither consume nor reset the allowance.
+  No per-window tracking or public option was added. The same captured duration
+  governs both provider eligibility and the result-selection timer.
+- Signed managed x64, managed x86, and NativeAOT x64 smoke executions passed
+  for the earlier 100/50 setting. Signal-driven tests cover 100 -> 50 -> 50 admission,
+  independent instances, null/failing first attempts consuming the allowance,
+  and sequential interleaving preserving it, alongside existing selection and
+  cleanup checks. Logs: D:/Dev/_scratch/caret-budget-final-20261110/{x64,x86,aot}.txt.
+- UIA TextPattern remains last. No VS Code blocklist, zero-element-bounds filter,
+  stale-coordinate heuristic, or IsActive filter was added.
+- Prior uniform-50-ms Notepad trials: managed x64 and NativeAOT x64 each missed
+  the first result; all 39 repeats succeeded. A separate NativeAOT UIA observation
+  reached 45.85 ms on a repeat. These motivated the initial 100/50 choice,
+  later widened to 200/100 for more allowance. Neither is proven optimal.
+- VS Code timing initially included 90-160 ms total-return outliers. A later
+  NativeAOT trace had 60 successes, first 51.47 ms, repeated median 4.88 ms and
+  maximum 10.95 ms. Its first UIA focused-element lookup took about 95 ms, but
+  the MSAA result was delivered earlier after timer expiry. The older large
+  return outliers were not reproduced or explained; no timing fix is claimed.
+- User visual checks found Auto/MSAA following the VS Code insertion caret;
+  the UIA TextPattern marker stayed at the left. Three stable passive samples
+  found MSAA at (1155, 744), 1x26 and raw UIA selection at (906, 745), 1x24.
+  Current resolved/final coordinates and AHK-style conversion of that same raw
+  selection all matched UIA's (906, 745). AHK itself was not executed.
+  Thus the discrepancy predates C# geometry conversion; the underlying provider
+  cause is still unknown. TextPattern2 supplied no rectangle in these samples.
+- Local timing/geometry evidence is under D:/Dev/_scratch/
+  caret-latency-20261110, caret-latency-trace-20261110, and
+  caret-vscode-geometry-20261110. Test-only instrumentation is not in the library.
+
+Final pre-commit validation (2026-11-10):
+
+- Adopted the agreed 200 ms first-query / 100 ms subsequent-query policy.
+  Signed managed x64, managed x86, and NativeAOT x64 passed the core policy,
+  lifecycle, fixed-priority, and bounded-selection suites with the new values.
+- On the same three targets, NativeSmoke --workers passed 25 native/DPI checks
+  plus worker/admission suites and the new shared-Java shutdown/replacement test.
+  The new signal-driven test holds a fake Java query and queued work, closes both
+  leases, then starts replacement creation. It checks preserved accepted results,
+  draining before old-thread exit, a fresh runtime, and fresh Java admission.
+  This does not exercise a real Java application's Access Bridge.
+- Updated comments to match eager worker preparation and null-result behavior.
+  No additional UIA heuristics or COM-call refactoring was introduced.
+- Evidence: D:/Dev/_scratch/caret-release-20261110/
+  core-{x64,x86,aot}.txt and native-{x64,x86,aot}.txt.
+  No new live-app timing or visual alignment test was performed.
+
+Remaining live validation:
+
+- Fresh-client Notepad/VS Code trials with the new 200/100 policy; current live
+  timing evidence above used the previous uniform-50-ms policy.
+- Selection endpoints, RTL/mixed-direction text, and wrap boundaries in real
+  WPF/browser controls for the new conservative geometry behavior.
+- Reproduction of the occasional 90-160 ms return delay if observed again.
+- Windows 10, live x86/NativeAOT mixed-DPI alignment, and additional real Java
+  applications remain outside the completed coverage.
+- Known fallback limitation: plausible incorrect UIA TextPattern coordinates can
+  still be returned when all higher-priority paths fail. This is accepted policy,
+  not a defect claimed to have been corrected. Callers may use CaretType.

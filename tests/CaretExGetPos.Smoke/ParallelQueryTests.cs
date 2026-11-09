@@ -141,18 +141,20 @@ internal static class ParallelQueryTests
                 releasing.SetResult();
                 await finishRelease.Task.WaitAsync(Timeout);
             },
-            () =>
+            budget =>
             {
                 int index = Enter(CaretQueryMode.ParallelPriority);
+                Require(budget == TimeSpan.FromMilliseconds(index == 1 ? 200 : 100),
+                    "Sequential requests before and between queued parallel queries must neither consume nor reset the 200ms budget.");
                 return Task.FromResult(new CaretQueryOperation(results[index].Task, drains[index].Task));
             });
 
         Task<CaretPosition?>[] queries = new Task<CaretPosition?>[modes.Length];
         // Hold the first result so every following mode is captured while queued.
-        queries[0] = caret.GetPositionAsync();
+        queries[0] = caret.GetPositionAsync(CaretQueryMode.Sequential);
         await entered[0].Task.WaitAsync(Timeout);
         for (int index = 1; index < modes.Length; index++)
-            queries[index] = index == 4 ? caret.GetPositionAsync() : caret.GetPositionAsync(modes[index]);
+            queries[index] = caret.GetPositionAsync(modes[index]);
         Task disposal = caret.DisposeAsync().AsTask();
         Require(ReferenceEquals(disposal, caret.DisposeAsync().AsTask()),
             "Concurrent disposal calls must share completion.");
@@ -168,7 +170,7 @@ internal static class ParallelQueryTests
             if (modes[index] == CaretQueryMode.ParallelPriority)
             {
                 Require(Volatile.Read(ref next) == index + 1 && !releasing.Task.IsCompleted && !disposal.IsCompleted,
-                    "Delivering a parallel result must not advance the queue or release resources before drain.");
+                    "A following sequential query and disposal must wait for the preceding parallel drain.");
                 drains[index].SetResult();
             }
         }
@@ -198,10 +200,10 @@ internal static class ParallelQueryTests
                 "Release skipped the failed drain or abandoned the queued request.");
             Interlocked.Increment(ref released);
             return ValueTask.CompletedTask;
-        }, () => Task.FromResult(operation));
+        }, _ => Task.FromResult(operation));
 
         Task<CaretPosition?> first = caret.GetPositionAsync(CaretQueryMode.ParallelPriority);
-        Task<CaretPosition?> next = caret.GetPositionAsync();
+        Task<CaretPosition?> next = caret.GetPositionAsync(CaretQueryMode.Sequential);
         Task disposal = caret.DisposeAsync().AsTask();
         // Fault a lower provider before the higher success, then hold the last loser.
         candidates[1].SetException(loserError);
@@ -234,41 +236,27 @@ internal static class ParallelQueryTests
 
     private static async Task InvalidModeAndDefaultAsync()
     {
-        TaskCompletionSource entered = Signal();
-        TaskCompletionSource<CaretPosition?> firstResult = Candidate();
         int sequentialCalls = 0, parallelCalls = 0;
         CaretExGetPos caret = new(() =>
         {
-            Interlocked.Increment(ref sequentialCalls);
-            entered.TrySetResult();
-            return firstResult.Task;
-        }, () => ValueTask.CompletedTask, () =>
+            sequentialCalls++;
+            return Task.FromResult<CaretPosition?>(Position(0));
+        }, () => ValueTask.CompletedTask, _ =>
         {
-            Interlocked.Increment(ref parallelCalls);
+            parallelCalls++;
             return Task.FromResult(new CaretQueryOperation(
                 Task.FromResult<CaretPosition?>(Position(1)), Task.CompletedTask));
         });
-        Task<CaretPosition?> first = caret.GetPositionAsync();
-        await entered.Task.WaitAsync(Timeout);
         foreach (int invalid in new[] { -1, 2, int.MinValue, int.MaxValue })
         {
-            try
-            {
-                _ = caret.GetPositionAsync((CaretQueryMode)invalid);
-            }
-            catch (ArgumentOutOfRangeException error) when (error.ParamName == "mode")
-            {
-                continue;
-            }
-            throw new InvalidOperationException("An invalid enum must be rejected synchronously at admission.");
+            try { _ = caret.GetPositionAsync((CaretQueryMode)invalid); }
+            catch (ArgumentOutOfRangeException error) when (error.ParamName == "mode") { continue; }
+            throw new InvalidOperationException("Invalid enum admitted work.");
         }
-        Task<CaretPosition?> second = caret.GetPositionAsync(CaretQueryMode.ParallelPriority);
-        firstResult.SetResult(Position(0));
-        Require(await first.WaitAsync(Timeout) == Position(0) &&
-            await second.WaitAsync(Timeout) == Position(1), "Invalid admission corrupted valid requests.");
-        await caret.DisposeAsync().AsTask().WaitAsync(Timeout);
-        Require(sequentialCalls == 1 && parallelCalls == 1,
-            "Default must remain sequential, and invalid enum values must never admit work.");
+        Require(await caret.GetPositionAsync() == Position(1), "The default must select bounded parallel lookup.");
+        Require(await caret.GetPositionAsync(CaretQueryMode.Sequential) == Position(0), "Explicit sequential lookup remains available.");
+        await caret.DisposeAsync();
+        Require(sequentialCalls == 1 && parallelCalls == 1, "Invalid requests must not execute providers.");
     }
 
     private static CaretQueryOperation Start(TaskCompletionSource<CaretPosition?>[] candidates, Task? cleanup = null) =>

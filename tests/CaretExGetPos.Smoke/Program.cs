@@ -2,3 +2,5 @@ Console.WriteLine($"Core smoke process architecture: {System.Runtime.InteropServ
 await CorePolicyTests.RunAsync();
 
 await ParallelQueryTests.RunAsync();
+
+await BoundedQueryTests.RunAsync();

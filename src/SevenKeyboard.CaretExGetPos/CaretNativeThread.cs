@@ -13,6 +13,7 @@ internal sealed class CaretNativeThread : IAsyncDisposable
     private readonly object _gate = new();
     private readonly Backend _backend;
     private bool _disposed, _javaAvailable;
+    private Func<nint, CaretPosition?>? _javaQueryForTests;
     private Task? _disposeTask;
     private Action<nint>? _destroyed;
 
@@ -111,15 +112,32 @@ internal sealed class CaretNativeThread : IAsyncDisposable
         }
     }
 
+    // Reserve on the shared owner, including time spent in its queue. The guard
+    // runs on that owner just before querying; expiry never cancels an active call.
+    internal Task<CaretPosition?> TryRunJavaAsync(nint window, Func<bool> canStart)
+    {
+        ArgumentNullException.ThrowIfNull(canStart);
+        lock (_gate)
+        {
+            if (_disposed) return Task.FromException<CaretPosition?>(new ObjectDisposedException(nameof(CaretNativeThread)));
+            return _backend.TryEnqueueJava(() => CaretParallelQuery.ReadIfCurrent(canStart, () => TryGetJava(window)));
+        }
+    }
+
+    // Replaces only the native query body for owner/admission smoke tests.
+    internal void SetJavaQueryForTests(Func<nint, CaretPosition?>? query)
+    {
+        _backend.RequireCurrent();
+        _javaQueryForTests = query;
+    }
+
     // These methods are intentionally synchronous: core calls them only inside RunAsync.
     internal nint SampleForeground() { _backend.RequireCurrent(); return CaretNative.GetForegroundWindow(); }
     internal CaretPosition? TryGetMsaa(nint window) { _backend.RequireCurrent(); return CaretNative.TryGetMsaa(window); }
     internal CaretPosition? TryGetGuiThreadInfo() { _backend.RequireCurrent(); return CaretNative.TryGetGuiThreadInfo(); }
-    internal CaretPosition? TryGetJava(nint window)
-    {
-        _backend.RequireCurrent();
-        return _javaAvailable ? _backend.Java.TryGet(window) : null;
-    }
+    internal CaretPosition? TryGetJava(nint window) => _backend.RunJava(() =>
+        _javaQueryForTests is { } query ? query(window) :
+        _javaAvailable ? _backend.Java.TryGet(window) : null);
 
     public ValueTask DisposeAsync()
     {
@@ -175,6 +193,8 @@ internal sealed class CaretNativeThread : IAsyncDisposable
         private readonly Thread _thread;
         private readonly nint _desktop;
         private bool _stopping, _stopped;
+        private Task<CaretPosition?>? _javaPending; // guarded by _queueGate
+        private int _javaCallDepth; // also covers explicit sequential calls
         private Exception? _failure;
         private nint _window;
         private uint _shellMessage;
@@ -213,6 +233,28 @@ internal sealed class CaretNativeThread : IAsyncDisposable
                 _wake.Set();
             }
             return completion.Task;
+        }
+
+        internal Task<CaretPosition?> TryEnqueueJava(Func<CaretPosition?> action)
+        {
+            lock (_queueGate)
+            {
+                if (_stopping || _stopped)
+                    return Task.FromException<CaretPosition?>(_failure ?? new ObjectDisposedException(nameof(CaretNativeThread)));
+                if (_javaCallDepth != 0 || _javaPending is { IsCompleted: false })
+                    return Task.FromResult<CaretPosition?>(null);
+                // Enqueue uses this same reentrant gate: no other lease can reserve
+                // between checking availability and publishing the pending task.
+                return _javaPending = Enqueue(action);
+            }
+        }
+
+        internal CaretPosition? RunJava(Func<CaretPosition?> action)
+        {
+            RequireCurrent();
+            lock (_queueGate) _javaCallDepth++;
+            try { return action(); }
+            finally { lock (_queueGate) _javaCallDepth--; }
         }
 
         private bool Take(out Command? command)

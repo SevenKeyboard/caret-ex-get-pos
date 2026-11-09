@@ -1,6 +1,6 @@
 namespace SevenKeyboard;
 
-// Created only for parallel queries; the original sequential runtime is unchanged.
+// Prepared with the caret instance for parallel queries; sequential lookup uses the shared native runtime.
 internal sealed class CaretParallelNativeThreads : IAsyncDisposable
 {
     internal CaretProviderThread Msaa { get; }

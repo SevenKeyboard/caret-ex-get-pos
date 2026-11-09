@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
-    <Version>3.1.0</Version>
+    <Version>4.0.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -11,7 +11,7 @@
     <LibraryBuildTargetsPath Condition="'$(LibraryBuildTargetsPath)' == ''">$(MSBuildThisFileDirectory)../../../../library-build/main-cs/CheckLibraryVersions.targets</LibraryBuildTargetsPath>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(UiAutomationClientProjectPath)" MinimumVersion="1.0.0" />
+    <ProjectReference Include="$(UiAutomationClientProjectPath)" MinimumVersion="1.1.0" />
     <ProjectReference Include="$(ShellHookWindowProjectPath)" MinimumVersion="3.0.0" />
     <InternalsVisibleTo Include="CaretExGetPos.Smoke" />
     <InternalsVisibleTo Include="CaretExGetPos.NativeSmoke" />

@@ -97,6 +97,9 @@ internal sealed class CaretQueryState
             _windows.Clear();
     }
 
+    internal static CaretPosition? FromResolvedRectangle(UiaTextRectangle? rectangle, bool useTextPattern2) =>
+        FromRectangles(rectangle is { } value ? [value] : null, useTextPattern2);
+
     internal static CaretPosition? FromCaretRange(UiaCaretRange? range) =>
         FromRectangles(range?.Rectangles, useTextPattern2: true);
 

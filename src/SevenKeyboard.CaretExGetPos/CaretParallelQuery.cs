@@ -7,22 +7,57 @@ internal sealed record CaretQueryOperation(Task<CaretPosition?> Result, Task Dra
 
 internal static class CaretParallelQuery
 {
-    internal static CaretQueryOperation Start(
-        Task<CaretPosition?> java, Task<CaretPosition?> uia2, Task<CaretPosition?> msaa,
-        Task<CaretPosition?> gui, Task<CaretPosition?> uia1, Task? cleanup = null)
+    // Validate again after a synchronous provider call: a delayed timer/continuation
+    // must not allow a result acquired outside its original observation budget.
+    internal static CaretPosition? ReadIfCurrent(Func<bool> eligible, Func<CaretPosition?> read)
     {
-        Task<CaretPosition?>[] candidates = [java, uia2, msaa, gui, uia1];
-        return new(SelectAsync(candidates), DrainAsync(candidates, cleanup));
+        if (!eligible()) return null;
+        CaretPosition? result = read();
+        return eligible() ? result : null;
     }
 
-    private static async Task<CaretPosition?> SelectAsync(Task<CaretPosition?>[] candidates)
+    internal static CaretQueryOperation Start(
+        Task<CaretPosition?> java, Task<CaretPosition?> uia2, Task<CaretPosition?> msaa,
+        Task<CaretPosition?> gui, Task<CaretPosition?> uia1, Task? cleanup = null, Task? deadline = null)
     {
-        // All work has already been started/queued. Await order decides preference,
-        // not execution order. A faster, lower-ranked result cannot win the race.
-        foreach (Task<CaretPosition?> candidate in candidates)
-            if (await candidate.ConfigureAwait(false) is { } position)
-                return position;
-        return null;
+        Task<CaretPosition?>[] candidates = [java, uia2, msaa, gui, uia1];
+        return new(SelectAsync(candidates, deadline), DrainAsync(candidates, cleanup));
+    }
+
+    private static async Task<CaretPosition?> SelectAsync(Task<CaretPosition?>[] candidates, Task? deadline)
+    {
+        // With no budget, retain the original deterministic priority contract.
+        if (deadline is null)
+        {
+            foreach (Task<CaretPosition?> candidate in candidates)
+                if (await candidate.ConfigureAwait(false) is { } position) return position;
+            return null;
+        }
+
+        while (true)
+        {
+            bool expired = deadline.IsCompleted;
+            bool higherPending = false;
+            List<Task> pending = [];
+            foreach (Task<CaretPosition?> candidate in candidates)
+            {
+                if (!candidate.IsCompleted)
+                {
+                    higherPending = true;
+                    pending.Add(candidate);
+                    continue;
+                }
+                // Required-path programmer/lifetime failures retain their identity.
+                // Lower speculative failures remain observed by DrainAsync.
+                if (!higherPending || expired)
+                {
+                    if (await candidate.ConfigureAwait(false) is { } position) return position;
+                }
+            }
+            if (expired || pending.Count == 0) return null;
+            pending.Add(deadline);
+            await Task.WhenAny(pending).ConfigureAwait(false);
+        }
     }
 
     private static async Task DrainAsync(Task<CaretPosition?>[] candidates, Task? cleanup)
