@@ -209,6 +209,25 @@ Final pre-commit validation (2026-11-10):
   core-{x64,x86,aot}.txt and native-{x64,x86,aot}.txt.
   No new live-app timing or visual alignment test was performed.
 
+Shared DPI context reuse (4.0.1, 2026-11-10):
+
+- Signed managed x64, managed x86, and NativeAOT x64 each passed
+  NativeSmoke --pump: 85 native/DPI checks. The added regression checks zero
+  rejection, native error propagation, and exact raw-context restoration while
+  unwinding a failed nested scope.
+- Signed managed x64 DpiSmoke --require-mixed passed 7,168 assertions,
+  512 GuiToPhysical calls, and 32 hidden HWND fixtures across four monitors.
+  Mixed-scale coverage was present, with 10 nonidentity-size fixtures.
+- All four builds/publishes completed without warnings or errors. All output
+  EXEs and top-level DLLs had Valid Authenticode signatures before execution.
+- Source review confirmed TransformJava is unchanged; JavaToPhysical changes
+  only the raw DPI getter qualification. These runs used owned hidden windows
+  without input or foreground application queries.
+- Logs: D:/Dev/_scratch/dpi-context-reuse-20261110/
+  {caret-x64,caret-x86,caret-aot,caret-dpi-x64}/ contains build.log, sign.log,
+  test.stdout.log, test.stderr.log, and test.exitcode.txt. All test exits were 0.
+  Other suites and live-application checks were not repeated in this matrix.
+
 Remaining live validation:
 
 - Fresh-client Notepad/VS Code trials with the new 200/100 policy; current live

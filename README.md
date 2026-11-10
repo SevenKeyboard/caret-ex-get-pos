@@ -1,6 +1,6 @@
 # caret-ex-get-pos
 
-Asynchronous caret lookup in physical desktop pixels. Version 4.0.0; .NET 10,
+Asynchronous caret lookup in physical desktop pixels. Version 4.0.1; .NET 10,
 Windows 10 1607+, x64/x86, NativeAOT. Java Access Bridge is x64 only.
 
     using SevenKeyboard;
@@ -63,8 +63,10 @@ an optional absolute javaAccessBridgePath overrides it. Missing/unloadable Java
 support disables that path. The DLL and notices are copied to build/publish output.
 The target Java application must already have Access Bridge enabled.
 
-Dependencies are separate source projects. Override UiAutomationClientProjectPath,
-ShellHookWindowProjectPath, and LibraryBuildTargetsPath for another layout.
+Dependencies are separate source projects, including DpiAwarenessContextUtils
+1.0.1 or later in the 1.x series for raw DPI context access and native error capture.
+Override UiAutomationClientProjectPath, ShellHookWindowProjectPath,
+DpiAwarenessContextUtilsProjectPath, and LibraryBuildTargetsPath for another layout.
 The build checks minimum versions and matching majors. Product snapshots include
 dependency sources, the Java DLL, and notices; source repositories do not vendor
 each other.

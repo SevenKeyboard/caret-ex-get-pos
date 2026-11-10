@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SevenKeyboard;
@@ -119,27 +120,53 @@ internal static class Program
             Task<int>[] work = Enumerable.Range(0, 32).Select(i => first.RunAsync(() => { order.Add(i); return i; })).ToArray();
             await Task.WhenAll(work);
             Check(order.SequenceEqual(Enumerable.Range(0, 32)), "Worker executes admitted calls in FIFO order.");
+            // These existing native DPI scope tests already require Windows 10 1607.
+#pragma warning disable CA1416
             bool restored = await first.RunAsync(() =>
             {
-                nint before = CaretNative.GetThreadDpiAwarenessContext();
+                nint before = DpiAwarenessContextUtils.GetThreadDpiAwarenessContext();
                 using (new CaretDpi.Scope(CaretDpi.SystemAware))
-                    if (CaretNative.GetAwarenessFromDpiAwarenessContext(CaretNative.GetThreadDpiAwarenessContext()) != 1) return false;
-                return CaretNative.GetThreadDpiAwarenessContext() == before;
+                    if (CaretNative.GetAwarenessFromDpiAwarenessContext(DpiAwarenessContextUtils.GetThreadDpiAwarenessContext()) != 1) return false;
+                return DpiAwarenessContextUtils.GetThreadDpiAwarenessContext() == before;
             });
             Check(restored, "Worker DPI scope restores its previous thread context.");
+            bool failureRestored = await first.RunAsync(() =>
+            {
+                nint before = DpiAwarenessContextUtils.GetThreadDpiAwarenessContext();
+                nint temporary = CaretNative.GetAwarenessFromDpiAwarenessContext(before) == 1
+                    ? CaretDpi.PerMonitorAware : CaretDpi.SystemAware;
+                foreach (nint invalidContext in new nint[] { 0, -6 })
+                {
+                    bool rejected = false;
+                    try
+                    {
+                        using var scope = new CaretDpi.Scope(temporary);
+                        Marshal.SetLastPInvokeError(0x5A17); // Native failure must replace this stale cached error.
+                        using var invalid = new CaretDpi.Scope(invalidContext);
+                    }
+                    catch (ArgumentException error) when (invalidContext == 0 && error.ParamName == "context")
+                    { rejected = true; }
+                    catch (Win32Exception error) when (invalidContext == -6 && error.NativeErrorCode == 87) // ERROR_INVALID_PARAMETER
+                    { rejected = true; }
+                    if (!rejected || DpiAwarenessContextUtils.GetThreadDpiAwarenessContext() != before) return false;
+                }
+                return true;
+            });
+            Check(failureRestored, "Rejected DPI scopes preserve exception details and unwind to the exact previous raw context.");
             foreach (nint context in new nint[] { -1, -2, -3, -4 })
             {
                 bool msaaRestored = await first.RunAsync(() =>
                 {
                     using var outer = new CaretDpi.Scope(context);
-                    nint before = CaretNative.GetThreadDpiAwarenessContext();
+                    nint before = DpiAwarenessContextUtils.GetThreadDpiAwarenessContext();
                     // Our invisible notification HWND owns no caret. Exercise the
                     // real MSAA no-result path without querying the user's foreground.
                     CaretPosition? result = CaretNative.TryGetMsaa(window);
-                    return result is null && CaretNative.GetThreadDpiAwarenessContext() == before;
+                    return result is null && DpiAwarenessContextUtils.GetThreadDpiAwarenessContext() == before;
                 });
                 Check(msaaRestored, $"MSAA no-result lookup restores caller DPI context {context}.");
             }
+#pragma warning restore CA1416
             await first.DisposeAsync();
             Check(await second.RunAsync(() => 42) == 42, "Disposing one lease leaves another usable.");
             Check(CaretNative.IsWindow(window) != 0, "Nonfinal disposal retains the shared HWND.");

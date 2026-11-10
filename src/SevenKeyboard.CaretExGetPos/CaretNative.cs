@@ -128,10 +128,7 @@ internal static unsafe partial class CaretNative
     [LibraryImport("user32.dll", SetLastError = true)] internal static partial int GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
     [LibraryImport("user32.dll", SetLastError = true)] internal static partial int ClientToScreen(nint window, ref Point point);
     [LibraryImport("user32.dll")] internal static partial int LogicalToPhysicalPointForPerMonitorDPI(nint window, ref Point point);
-    [LibraryImport("user32.dll")] internal static partial nint GetWindowDpiAwarenessContext(nint window);
     [LibraryImport("user32.dll")] internal static partial int GetAwarenessFromDpiAwarenessContext(nint context);
-    [LibraryImport("user32.dll", SetLastError = true)] internal static partial nint SetThreadDpiAwarenessContext(nint context);
-    [LibraryImport("user32.dll")] internal static partial nint GetThreadDpiAwarenessContext();
     [LibraryImport("user32.dll")] internal static partial nint MonitorFromWindow(nint window, uint flags);
     [LibraryImport("user32.dll")] internal static partial nint MonitorFromPoint(Point point, uint flags);
     [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")] internal static partial int GetMonitorInfo(nint monitor, ref MonitorInfo info);

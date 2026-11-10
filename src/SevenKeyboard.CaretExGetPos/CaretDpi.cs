@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 
 namespace SevenKeyboard;
 
+// These existing native DPI paths already require Windows 10 1607.
+#pragma warning disable CA1416
 internal static class CaretDpi
 {
     internal const nint SystemAware = -2;
@@ -15,12 +17,12 @@ internal static class CaretDpi
         internal Scope(nint context)
         {
             if (context == 0) throw new ArgumentException("A valid DPI context is required.", nameof(context));
-            _previous = CaretNative.SetThreadDpiAwarenessContext(context);
+            _previous = DpiAwarenessContextUtils.SetThreadDpiAwarenessContext(context);
             if (_previous == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
         }
         public void Dispose()
         {
-            if (_previous != 0 && CaretNative.SetThreadDpiAwarenessContext(_previous) == 0)
+            if (_previous != 0 && DpiAwarenessContextUtils.SetThreadDpiAwarenessContext(_previous) == 0)
                 throw new Win32Exception(Marshal.GetLastPInvokeError(), "Cannot restore the worker's DPI context.");
         }
     }
@@ -28,7 +30,7 @@ internal static class CaretDpi
     internal static CaretPosition? GuiToPhysical(nint window, CaretNative.Rect rect)
     {
         // rcCaret is in the target window's logical CLIENT space, irrespective of caller DPI.
-        using var scope = new Scope(CaretNative.GetWindowDpiAwarenessContext(window));
+        using var scope = new Scope(DpiAwarenessContextUtils.GetWindowDpiAwarenessContext(window));
         return MapGuiCorners(rect,
             (ref CaretNative.Point p) => CaretNative.ClientToScreen(window, ref p) != 0,
             (ref CaretNative.Point p) => CaretNative.LogicalToPhysicalPointForPerMonitorDPI(window, ref p) != 0);
@@ -46,7 +48,7 @@ internal static class CaretDpi
 
     internal static unsafe CaretPosition? JavaToPhysical(nint window, JavaAccessBridge.TextRect raw)
     {
-        int awareness = CaretNative.GetAwarenessFromDpiAwarenessContext(CaretNative.GetWindowDpiAwarenessContext(window));
+        int awareness = CaretNative.GetAwarenessFromDpiAwarenessContext(DpiAwarenessContextUtils.GetWindowDpiAwarenessContext(window));
         if (awareness is < 0 or > 2) return null;
         using var systemScope = new Scope(SystemAware);
         nint monitor = CaretNative.MonitorFromWindow(window, 2);
@@ -109,3 +111,4 @@ internal static class CaretDpi
         return true;
     }
 }
+#pragma warning restore CA1416
